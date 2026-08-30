@@ -1,0 +1,83 @@
+name: Build Hermes iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Hermes Mobile PR
+        uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: refs/pull/52673/head
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build embedded Hermes renderer
+        working-directory: apps/mobile
+        run: |
+          npm run typecheck
+          npm run renderer:bundle
+
+      - name: Generate iOS project
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild \
+            --platform ios \
+            --clean \
+            --no-install
+
+      - name: Install CocoaPods
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Build unsigned iPhone app
+        working-directory: apps/mobile/ios
+        run: |
+          xcodebuild \
+            -workspace Hermes.xcworkspace \
+            -scheme Hermes \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: apps/mobile/ios
+        run: |
+          APP_PATH=$(find build/Build/Products/Release-iphoneos \
+            -maxdepth 1 \
+            -name "*.app" \
+            -print \
+            -quit)
+
+          echo "APP_PATH=$APP_PATH"
+
+          test -n "$APP_PATH"
+
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+
+          zip -qry Hermes-Mobile-unsigned.ipa Payload
+
+          ls -lh Hermes-Mobile-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hermes-Mobile-iOS
+          path: apps/mobile/ios/Hermes-Mobile-unsigned.ipa
+          retention-days: 7
